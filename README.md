@@ -2,6 +2,8 @@
 
 Blog by Mohiadeen Ameer, live at https://mohiadeen-ameer.github.io/blogs/. Posts are Markdown files, and there's no build step.
 
+**Writing a new post?** Follow [AGENTS.md](AGENTS.md). It sets out the structure, diagrams and style every post should match, using the Journey to Cloud post as the reference.
+
 ## Add a post
 
 1. Create `posts/<slug>.md`.
