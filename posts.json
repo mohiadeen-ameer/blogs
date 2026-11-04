@@ -1,0 +1,34 @@
+[
+  {
+    "slug": "journey-to-cloud",
+    "title": "Journey to Cloud: Modernizing 60+ Legacy Java Apps, from WebSphere to Kubernetes",
+    "date": "2024-06-15",
+    "description": "Mavenizing 60+ legacy apps, a reusable Jenkins pipeline, WebSphere to Liberty, Docker and AKS, and saving on database licensing. Then one intranet-heavy app hit a latency wall and moved to on-prem OpenShift while the rest stayed in the cloud. Plus what I'd do differently today.",
+    "tags": [
+      "cloud",
+      "kubernetes",
+      "migration",
+      "java",
+      "liberty",
+      "openshift"
+    ],
+    "readTime": "16 min",
+    "difficulty": "intermediate"
+  },
+  {
+    "slug": "strimzi-kafka-to-opensearch",
+    "title": "Streaming Logs from Strimzi Kafka into OpenSearch with Data Prepper",
+    "date": "2026-11-15",
+    "description": "Run Kafka on Kubernetes with Strimzi, push application logs into a topic, and ship them to OpenSearch with a Data Prepper pipeline.",
+    "tags": [
+      "kafka",
+      "strimzi",
+      "opensearch",
+      "data-prepper",
+      "tutorial"
+    ],
+    "readTime": "15 min",
+    "difficulty": "intermediate",
+    "draft": true
+  }
+]
