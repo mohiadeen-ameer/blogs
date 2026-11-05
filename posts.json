@@ -1,7 +1,7 @@
 [
   {
     "slug": "playwright-container",
-    "title": "Playwright in a Container: What to Use It For and How",
+    "title": "Playwright in Docker: What to Use It For and How",
     "date": "2026-11-05",
     "description": "Microsoft's Playwright image gives you Chromium, Firefox and WebKit with only Docker installed. When to use it, the flags that matter, and six practical setups: tests, screenshots, your own test image, a shared browser server, CI and production monitoring.",
     "tags": [
