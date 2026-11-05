@@ -1,131 +1,161 @@
-Today I had a demo. Before it, I asked my AI agent at the office to put together a slide deck with fresh screenshots of the app. While it worked, I noticed something in its log: it **pulled a container image from Microsoft**, `mcr.microsoft.com/playwright`, and used that to take the screenshots.
+Before a demo this week, I asked my AI agent at the office to put together a slide deck with fresh screenshots of our app. In its log, I noticed it **pulled a container image from Microsoft**, `mcr.microsoft.com/playwright`, and took every screenshot from inside it.
 
-I'd used Playwright before, but never thought about running it in a container. So after the demo I rebuilt the idea from scratch: a small app, a script that turns screenshots into slides, and a proper test suite, all running in that container. **My Mac has Docker and nothing else**: no Node.js, no browsers.
+That got me curious. What exactly is in that image? Why would an agent reach for it? And how do teams run it in real test automation systems, not just on a laptop? So I took it apart.
 
-If I had to sum it up in one sentence: **one `docker run` gives you three real browsers, ready to screenshot, test and export, on any machine.**
+If I had to sum it up in one sentence: **it's a complete, version-locked browser lab in one image, and how you run it matters as much as what's in it.**
 
 <div class="stat-strip">
-  <div><b>0</b><span>Node or browser installs on my Mac</span></div>
-  <div><b>3</b><span>browser engines in one image</span></div>
-  <div><b>&lt;10 s</b><span>for 6 screenshots + a 7-slide PDF</span></div>
-  <div><b>18</b><span>tests across 3 browsers in 4.8 s</span></div>
+  <div><b>~1 GB</b><span>download, 3.5 GB on disk</span></div>
+  <div><b>3</b><span>browser engines: Chromium, Firefox, WebKit</span></div>
+  <div><b>4</b><span>language flavors: Node, Python, .NET, Java</span></div>
+  <div><b>2</b><span>CPU architectures: amd64 and arm64</span></div>
 </div>
 
-The demo code is on GitHub: **[mohiadeen-ameer/playwright-container-demo](https://github.com/mohiadeen-ameer/playwright-container-demo)**. Everything in this post, including every number and screenshot, comes from running it.
+Everything below comes from inspecting and running the image myself. The runnable examples are in **[mohiadeen-ameer/playwright-container-demo](https://github.com/mohiadeen-ameer/playwright-container-demo)**.
 
-## The big picture
+## What it is, in one picture
+
+[Playwright](https://playwright.dev) is Microsoft's open-source tool for driving real browsers from code. The hard part has never been the code; it's the **setup**. Each Playwright release needs specific browser builds, plus dozens of Linux libraries for graphics, audio, fonts and codecs. Get one wrong and you get `error while loading shared libraries`.
+
+The container ships all of it, tested together:
 
 ```mermaid
 flowchart TB
-  subgraph HOST["Your machine: Docker only"]
+  subgraph TOP["Browsers + their system libraries (~2.1 GB)"]
     direction LR
-    APP[Your app or any URL]
-    CFG[shots.json + tests/]
+    CH[Chromium + headless shell] --- FF[Firefox] --- WK[WebKit] --- FM[ffmpeg]
   end
-  subgraph BOX["mcr.microsoft.com/playwright"]
+  subgraph MID["Playwright + Node.js (~390 MB)"]
     direction LR
-    NODE[Node.js] --> PW[Playwright] --> BR[Chromium · Firefox · WebKit]
+    PC[playwright-core] --- NODE[Node.js 26 + npm + yarn]
   end
-  subgraph OUT["What you get"]
+  subgraph BASE["Ubuntu 24.04 'noble' (110 MB)"]
     direction LR
-    SS[Screenshots] --> DECK[Slide deck PDF]
-    REP[Test report + visual diffs]
+    OS[Base OS] --- LIBS[System libraries + 50 fonts]
   end
-  HOST --> BOX --> OUT
-  CI[GitHub Actions] -. same image .-> BOX
-  classDef host fill:#334155,stroke:#94a3b8,color:#fff
-  classDef box fill:#4f46e5,stroke:#a5b4fc,color:#fff
-  classDef out fill:#15803d,stroke:#86efac,color:#fff
-  classDef ci fill:#0f766e,stroke:#5eead4,color:#fff
-  class APP,CFG host
-  class NODE,PW,BR box
-  class SS,DECK,REP out
-  class CI ci
+  TOP --- MID --- BASE
+  classDef top fill:#4f46e5,stroke:#a5b4fc,color:#fff
+  classDef mid fill:#0f766e,stroke:#5eead4,color:#fff
+  classDef base fill:#334155,stroke:#94a3b8,color:#fff
+  class CH,FF,WK,FM top
+  class PC,NODE mid
+  class OS,LIBS base
 ```
 
-## What the Playwright container is
+## Where it lives, and how the tags work
 
-[Playwright](https://playwright.dev) is Microsoft's open-source tool for driving real browsers from code: open a page, click, type, take screenshots, run tests. The hard part is never the code. It's the **setup**: Playwright needs specific browser builds plus dozens of Linux system libraries (fonts, graphics, audio, codecs) that have to match exactly.
+The image is published on **Microsoft Container Registry (MCR)**, not Docker Hub. The tag tells you three things:
 
-Microsoft solves that with an official Docker image that has everything preinstalled and version-matched. Here's what I found inside:
+```
+mcr.microsoft.com/playwright:v1.64.1-noble
+                  │           │      │
+                  │           │      └─ Ubuntu base
+                  │           └──────── Playwright version
+                  └──────────────────── flavor (language)
+```
+
+- **Flavor:** `playwright` (Node), `playwright/python`, `playwright/dotnet`, `playwright/java`
+- **Version:** must match the Playwright version in your project, exactly
+- **Base:** `jammy` (22.04), `noble` (24.04) or `resolute` (26.04)
+
+What I found on the registry for this release:
+
+| Image | Bases for v1.64.1 | Notes |
+|---|---|---|
+| `playwright` (Node) | jammy, noble, resolute | Also `-amd64` / `-arm64` and nightly `canary` tags |
+| `playwright/python` | jammy, noble, resolute | For pytest-playwright suites |
+| `playwright/dotnet` | noble, resolute | For NUnit / MSTest suites |
+| `playwright/java` | noble | **Lags one patch behind**: latest was v1.64.0 |
+
+Every tag is a **multi-arch manifest**, built for both `linux/amd64` and `linux/arm64`. On my Apple Silicon Mac it pulled the native arm64 build automatically; in GitHub Actions, the amd64 one.
+
+> [!TIP]
+> For production, pin the **digest**, not just the tag. A tag can be re-pushed; a digest can't:
+> `mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a7…9038768f`
+
+## Inside the image
+
+### Configuration
 
 ```terminal
-$ docker pull mcr.microsoft.com/playwright:v1.64.1-noble
-$ docker run --rm mcr.microsoft.com/playwright:v1.64.1-noble \
-    bash -c 'node --version; ls /ms-playwright; grep PRETTY /etc/os-release'
-v26.13.0
-chromium-1248
-chromium_headless_shell-1248
-ffmpeg-1013
-firefox-1555
-webkit-2370
-PRETTY_NAME="Ubuntu 24.04.5 LTS"
+$ docker image inspect mcr.microsoft.com/playwright:v1.64.1-noble \
+    --format 'User={{.Config.User}} Cmd={{.Config.Cmd}} Layers={{len .RootFS.Layers}}'
+User= Cmd=[/bin/bash] Layers=7
+$ docker image inspect mcr.microsoft.com/playwright:v1.64.1-noble \
+    --format '{{range .Config.Env}}{{println .}}{{end}}'
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ```
 
-| Inside the image | Why it matters |
-|---|---|
-| Ubuntu 24.04 ("noble") | A stable, known Linux base |
-| Node.js 26 | Run Playwright scripts and tests without installing Node yourself |
-| Chromium, Firefox, **WebKit** | All three engines. WebKit is Safari's engine, so you can check Safari rendering from Linux |
-| ffmpeg | Video recording of test runs |
-| All system libraries and fonts | No "missing libnss3.so" errors, ever |
+Three things worth knowing:
 
-The pull took **31 seconds** on my connection, and the image is about **3.5 GB** on disk. That's big, but you download it once.
+- **`User=` is empty, so it runs as root by default.** A non-root user, `pwuser` (uid 1001), is already created for you. Use it.
+- **`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`** tells Playwright where the browsers are. This is why your project's `npm ci` doesn't download browsers again.
+- **There's no entrypoint**, just `bash`. You decide what runs.
+
+### What takes up the space
+
+```terminal
+$ docker run --rm mcr.microsoft.com/playwright:v1.64.1-noble \
+    bash -c 'du -sh /ms-playwright/* /usr/share/fonts'
+402M  /ms-playwright/chromium-1248
+278M  /ms-playwright/chromium_headless_shell-1248
+3.9M  /ms-playwright/ffmpeg-1013
+287M  /ms-playwright/firefox-1555
+277M  /ms-playwright/webkit-2370
+91M   /usr/share/fonts
+```
+
+That's about **1.25 GB of browsers**. Chromium comes twice: the full browser, and a lighter **headless shell** that Playwright uses for headless runs. The registry download is **0.96 GB compressed in 7 layers**, which unpacks to 3.5 GB.
+
+### The fonts are a feature
+
+The image includes **50 font files**: Liberation (metric-compatible with Arial and Times), Noto Color Emoji, IPA Gothic (Japanese), WenQuanYi (Chinese) and more. Without them, screenshots of real-world pages show empty boxes instead of emoji or Asian text. Font differences are also a common cause of flaky visual tests, which comes up again below.
+
+### Small extras
+
+`python3`, `npm` 11 and `yarn` 1.22 are preinstalled, with 511 Debian packages in total. It's a full, comfortable Linux environment, not a stripped-down distroless image.
 
 > [!NOTE]
-> This is why the image is so useful for **AI agents**. An agent can't (and shouldn't) install browsers and system packages on your machine. With the container, it pulls one image, does its browser work inside a disposable sandbox, and leaves your machine untouched. That's very likely why my office agent reached for it.
+> This is exactly why it suits **AI agents**. An agent shouldn't install browsers and system packages on your machine. With this image it pulls one artifact, does its browser work in a disposable sandbox, and leaves nothing behind. That's very likely why my office agent reached for it.
 
-## Step 1: A small app to capture
+## Running it right: the flags that matter
 
-I built a tiny dashboard called **Release Radar** to have something realistic to photograph: delivery metrics, a deploys chart, a releases table, and a details panel that opens when you click a release. It supports light and dark mode, because real demos need both.
+```bash
+docker run --rm --init --ipc=host --user pwuser \
+  -v "$PWD":/work -w /work \
+  mcr.microsoft.com/playwright:v1.64.1-noble \
+  npx playwright test
+```
 
-<div class="fig-pair">
-<figure><img src="posts/img/playwright-container/dashboard-light.jpg" alt="Release Radar dashboard in light mode" loading="lazy"><figcaption>Light mode</figcaption></figure>
-<figure><img src="posts/img/playwright-container/dashboard-dark.jpg" alt="Release Radar dashboard in dark mode" loading="lazy"><figcaption>Dark mode</figcaption></figure>
-</div>
+| Flag | What it prevents |
+|---|---|
+| `--ipc=host` | Chromium crashing. It uses shared memory heavily, and Docker's default `/dev/shm` is only 64 MB. Playwright's docs recommend this flag. |
+| `--init` | Zombie processes. Browsers spawn many child processes; `--init` adds a tiny init process as PID 1 to reap them and forward signals. |
+| `--user pwuser` | Running browsers as root. Use it whenever the container visits sites you don't control. |
+| `--rm` | Leftover containers piling up after every run. |
+| `-v "$PWD":/work` | Copying files in and out. Your project mounts in; reports and screenshots land back on your disk. |
 
-Every screenshot in this post was taken by the container, not by me.
-
-## Step 2: Screenshots as code
-
-Instead of clicking around and pressing ⌘⇧4 before every demo, the screenshots are described in a file. Each entry is one screenshot, and later one slide:
-
-```json
+```quiz
 {
-  "name": "03-release-details",
-  "title": "Release details panel",
-  "url": "/",
-  "viewport": "desktop",
-  "colorScheme": "dark",
-  "click": "tr[data-release='3.0.0']",
-  "waitFor": ".panel.open"
+  "q": "Your Chromium tests crash randomly in Docker on big pages, but never on your laptop. What's the most likely fix?",
+  "options": ["Add more CPU to the container", "Run with --ipc=host (or a larger --shm-size)", "Switch the base from noble to jammy"],
+  "answer": 1,
+  "why": "Chromium uses shared memory heavily and Docker's default /dev/shm is only 64 MB. --ipc=host (recommended by Playwright) or a bigger --shm-size fixes it."
 }
 ```
 
-You can set the page, screen size (`desktop`, `tablet`, `mobile`), light or dark mode, browser engine, and even **click something first**, like opening a panel, before the photo is taken. The core of `shoot.mjs` is only a few lines of Playwright:
+## Five ways to use it in practice
 
-```javascript
-const context = await browser.newContext({ ...device, colorScheme: shot.colorScheme });
-const page = await context.newPage();
+These go from a single command to a full production setup. I ran every one of them.
 
-await page.goto(url, { waitUntil: "networkidle" });
-if (shot.click) await page.click(shot.click);          // e.g. open the details panel
-if (shot.waitFor) await page.waitForSelector(shot.waitFor);
-await page.screenshot({ path: file, fullPage: !!shot.fullPage });
-```
+### 1. One-shot jobs: screenshots, PDFs, scraping
 
-And the whole thing runs with one command. `shoot.sh` is just a `docker run` that mounts the project folder into the container:
-
-```bash
-docker run --rm --init --ipc=host \
-  -v "$PWD":/work -w /work \
-  mcr.microsoft.com/playwright:v1.64.1-noble \
-  bash -c "npm ci && node shoot.mjs"
-```
+This is what my agent did: start the container, do browser work, exit. My demo takes 6 screenshots (desktop, phone, light and dark, WebKit, a live URL) and assembles them into a PDF slide deck with Playwright's own `page.pdf()`:
 
 ```terminal
 $ ./shoot.sh
-added 2 packages in 441ms
 ✓ 01-dashboard-light           chromium   997 ms
 ✓ 02-dashboard-dark            chromium   899 ms
 ✓ 03-release-details           chromium   969 ms
@@ -136,110 +166,231 @@ added 2 packages in 441ms
 6 screenshots + deck.pdf in /work/out (8.4 s)
 ```
 
-**Under 10 seconds** from command to finished screenshots and deck. Here's what came out:
+<figure><img src="posts/img/playwright-container/release-details.jpg" alt="Demo app with the release details panel open" loading="lazy"><figcaption>Captured inside the container: the script clicks a release first, then takes the screenshot</figcaption></figure>
 
-<figure><img src="posts/img/playwright-container/release-details.jpg" alt="Release details panel open for inventory 3.0.0, rolled back" loading="lazy"><figcaption>Clicked into the "inventory" release first, then captured. No human involved.</figcaption></figure>
+<figure><img src="posts/img/playwright-container/webkit.jpg" alt="Demo app rendered by WebKit" loading="lazy"><figcaption>The same page rendered by WebKit, Safari's engine, on Linux</figcaption></figure>
 
-<figure><img src="posts/img/playwright-container/webkit.jpg" alt="Release Radar rendered by WebKit" loading="lazy"><figcaption>Same page rendered by WebKit (Safari's engine), on Linux</figcaption></figure>
+### 2. Bake your tests into your own image
 
-<figure class="narrow"><img src="posts/img/playwright-container/mobile.jpg" alt="Release Radar on a phone, full page" loading="lazy"><figcaption>Phone size, full scrolling page</figcaption></figure>
+For production pipelines, don't mount code at runtime. **Build an image `FROM` Playwright's**, so every run is reproducible and fully versioned:
 
-It isn't limited to your own app. Any URL works. Here it is capturing this blog:
+```dockerfile
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
-<figure><img src="posts/img/playwright-container/live-site.jpg" alt="The Tech Blogs home page captured by the container" loading="lazy"><figcaption>A live website, captured from inside the container</figcaption></figure>
+WORKDIR /app
 
-> [!TIP]
-> `--ipc=host` matters. Chromium uses shared memory heavily, and Docker's default 64 MB can make it crash on big pages. Playwright's own docs recommend this flag.
+# Dependencies first, so this layer stays cached until package*.json changes
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
-## Step 3: From screenshots to slides
+# Then the tests (change often, cheap layer)
+COPY . .
+RUN chown -R pwuser:pwuser /app
+USER pwuser
 
-This is the part my office agent did for the demo: screenshots into a presentation. The demo does it with **Playwright itself**, with no extra libraries:
-
-1. Build a simple HTML page where each "slide" is exactly 16:9 and holds one screenshot with its title.
-2. Open that page in Chromium inside the container.
-3. Call `page.pdf()` to print it as a landscape PDF, one slide per page.
-
-```javascript
-await deckPage.setContent(deckHtml, { waitUntil: "load" });
-await deckPage.pdf({ path: "out/deck.pdf", width: "13.333in", height: "7.5in", printBackground: true });
-```
-
-<div class="fig-pair">
-<figure><img src="posts/img/playwright-container/deck-title.jpg" alt="Title slide of the generated deck" loading="lazy"><figcaption>Slide 1: generated title slide</figcaption></figure>
-<figure><img src="posts/img/playwright-container/deck-slide.jpg" alt="A generated slide showing the dark dashboard" loading="lazy"><figcaption>Every screenshot becomes a labeled slide</figcaption></figure>
-</div>
-
-The result is a 7-page PDF: a title slide plus one slide per screenshot. It opens anywhere and presents full-screen like any deck. If you need an editable PowerPoint file, the same screenshots can go into a library like `pptxgenjs`, but for a demo, the PDF was all I needed.
-
-```quiz
-{
-  "q": "Why does the demo run `npm ci` inside the container instead of on the Mac?",
-  "options": ["The Mac's npm is too old", "There's no Node on the Mac at all; the container brings its own", "npm doesn't work with Docker volumes"],
-  "answer": 1,
-  "why": "The whole point: the host only needs Docker. Node.js 26, npm and the browsers all live in the image."
-}
-```
-
-## Step 4: Test automation with the container
-
-Screenshots for slides are nice. **Tests are where the container really earns its keep.** The demo includes a Playwright Test suite with two kinds of tests.
-
-### Functional tests: does the app work?
-
-These click around like a user and check what happens:
-
-```typescript
-test("clicking a release opens its details, and × closes them", async ({ page }) => {
-  const panel = page.locator("#panel");
-  await expect(panel).toBeHidden();
-
-  await page.getByRole("cell", { name: "inventory" }).click();
-  await expect(panel).toBeVisible();
-  await expect(panel).toContainText("lock contention under load");
-
-  await page.getByRole("button", { name: "Close" }).click();
-  await expect(panel).toBeHidden();
-});
-```
-
-### Visual regression tests: does it still look right?
-
-These compare the page, pixel by pixel, against an approved "golden" screenshot:
-
-```typescript
-test("dashboard looks right (dark)", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "dark" });
-  await expect(page).toHaveScreenshot("dashboard-dark.png", { fullPage: true });
-});
-```
-
-The config runs every test in **three browsers**:
-
-```typescript
-projects: [
-  { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-  { name: "webkit",   use: { ...devices["Desktop Safari"] } },
-  { name: "mobile",   use: { ...devices["Pixel 7"] } },
-],
+CMD ["npx", "playwright", "test"]
 ```
 
 ```terminal
-$ ./test.sh
-Running 18 tests using 5 workers
-  ✓   1 [chromium] › lists every release with its status (321ms)
-  ✓   2 [chromium] › clicking a release opens its details, and × closes them (669ms)
-  ✓   8 [webkit] › clicking a release opens its details, and × closes them (2.1s)
-  ✓  12 [webkit] › details panel looks right (1.3s)
-  ✓  18 [mobile] › details panel looks right (259ms)
-  ...
-  18 passed (4.8s)
+$ docker build -t release-radar-tests .        # first build: 16 s
+$ docker run --rm --ipc=host release-radar-tests
+  18 passed (4.5s)
+$ touch tests/release-radar.spec.ts && docker build -t release-radar-tests .
+ => CACHED [4/6] RUN npm ci --no-audit --no-fund
+                                               # rebuild after a test change: 1 s
 ```
 
-6 tests × 3 browsers = **18 tests in under 5 seconds**.
+What this gave me:
+- **It only adds 57 MB** on top of the base image (3.60 GB vs 3.54 GB). The browsers are shared, not copied.
+- **It runs as non-root** `pwuser` by default.
+- **Layer order matters.** Because dependencies are installed before the tests are copied, changing a test rebuilds in **1 second**.
+
+### 3. A shared browser server
+
+Playwright can run **as a server**. Browsers live in one container, and tests in any other container connect over WebSocket. This lets many teams or pipelines share a pool of browsers, and keeps test runners small. With Docker Compose:
+
+```yaml
+services:
+  browsers:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    user: pwuser
+    working_dir: /home/pwuser
+    init: true
+    ipc: host
+    command: ["npx", "-y", "playwright@1.64.1", "run-server", "--port", "3000", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/127.0.0.1/3000"]
+      interval: 2s
+      retries: 30
+
+  tests:
+    build: .
+    depends_on:
+      browsers:
+        condition: service_healthy
+    environment:
+      PW_WS: ws://browsers:3000/
+```
+
+In the Playwright config, the tests switch to the remote browser when `PW_WS` is set. `exposeNetwork` lets the remote browser reach the app that's running inside the *test* container:
+
+```typescript
+use: {
+  ...(process.env.PW_WS
+    ? { connectOptions: { wsEndpoint: process.env.PW_WS, exposeNetwork: "<loopback>" } }
+    : {}),
+},
+```
+
+```terminal
+$ docker compose up --build --abort-on-container-exit --exit-code-from tests
+browsers-1  | Listening on ws://0.0.0.0:3000/
+tests-1     |   ✓  4 [chromium] › lists every release with its status (345ms)
+tests-1     |   ✓  1 [chromium] › dashboard looks right (light) (393ms)
+tests-1     |   ✓  3 [chromium] › clicking a release opens its details, and × closes them (667ms)
+tests-1     |   6 passed (1.5s)
+```
+
+Even the pixel-perfect visual tests passed through the remote browser, because it's the same image rendering the same pixels.
+
+```mermaid
+flowchart LR
+  subgraph RUNNERS["Test runners (small)"]
+    direction TB
+    T1[Team A suite]
+    T2[Team B suite]
+    T3[Nightly job]
+  end
+  subgraph POOL["Browser server pool"]
+    direction TB
+    B1[playwright run-server]
+    B2[playwright run-server]
+  end
+  T1 -- ws:// --> B1
+  T2 -- ws:// --> B1
+  T3 -- ws:// --> B2
+  classDef run fill:#334155,stroke:#94a3b8,color:#fff
+  classDef pool fill:#4f46e5,stroke:#a5b4fc,color:#fff
+  class T1,T2,T3 run
+  class B1,B2 pool
+```
+
+> [!WARNING]
+> **Client and server versions must match exactly.** I pointed a 1.64 client at a 1.63 server to see what happens:
+> ```
+> WebSocket error: 428 Precondition Required
+> Playwright version mismatch:
+>   - server version: v1.63
+>   - client version: v1.64
+> ```
+> When you upgrade Playwright, upgrade the server image and every client in the same change.
+
+### 4. CI: the same image, in parallel shards
+
+GitHub Actions can run a job **inside** the container, so CI uses the exact same environment as your laptop. Large suites split across machines with `--shard`:
+
+```yaml
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx playwright test --shard=${{ matrix.shard }}/3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: playwright-report/
+```
+
+On the demo repo, the three shards ran in parallel, each job taking 41–76 seconds including container start. The bigger finding came on the first push. The visual baselines were created on my **arm64 Mac**, and GitHub's **amd64 Linux** runners matched them pixel for pixel, with zero tolerance. Same image, same fonts, same pixels.
+
+### 5. Synthetic monitoring of production
+
+The same image can test **your live production site** on a schedule, the way a user would. If it fails, users are affected:
+
+```typescript
+test("a post opens and its diagrams render", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", e => errors.push(e.message));
+
+  await page.goto(SITE);
+  await page.locator(".card").first().click();
+  await expect(page.locator("h1.post-title")).toBeVisible();
+  await expect(page.locator("figure.diagram svg").first()).toBeVisible();
+  expect(errors, "no JavaScript errors on the page").toEqual([]);
+});
+```
+
+```yaml
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # every 30 minutes
+```
+
+I pointed it at this blog, on desktop and phone:
+
+```terminal
+$ npx playwright test -c playwright.synthetic.config.ts
+home page ready in 380 ms
+  ✓  1 [desktop] › home page loads fast and lists posts (456ms)
+  ✓  2 [phone] › home page loads fast and lists posts (730ms)
+  ✓  3 [desktop] › a post opens and its diagrams render (1.5s)
+  ✓  4 [phone] › a post opens and its diagrams render (3.2s)
+  ✓  5 [desktop] › About page has working contact links (581ms)
+  ✓  6 [phone] › About page has working contact links (595ms)
+  6 passed (6.1s)
+```
+
+Unlike a simple uptime ping, this catches broken JavaScript, missing content and slow pages: the problems a status check reports as "200 OK".
+
+## Putting it together: a test automation system
+
+Here's how these patterns combine in a real system. Every box runs the same pinned image:
+
+```mermaid
+flowchart TB
+  subgraph DEV["Developer"]
+    direction LR
+    L[Local: ./test.sh] --> PR[Pull request]
+  end
+  subgraph GATE["CI gate on every PR"]
+    direction LR
+    S1[Shard 1] --- S2[Shard 2] --- S3[Shard 3]
+  end
+  subgraph AFTER["After merge"]
+    direction LR
+    IMG[Test image built FROM Playwright] --> NIGHT[Nightly full suite on browser pool]
+  end
+  subgraph PROD["Production"]
+    direction LR
+    SYN[Synthetic checks every 30 min] --> ALERT[Alert on failure]
+  end
+  DEV --> GATE --> AFTER
+  AFTER -. same image .-> PROD
+  classDef dev fill:#334155,stroke:#94a3b8,color:#fff
+  classDef gate fill:#4f46e5,stroke:#a5b4fc,color:#fff
+  classDef after fill:#0f766e,stroke:#5eead4,color:#fff
+  classDef prod fill:#15803d,stroke:#86efac,color:#fff
+  classDef alert fill:#b91c1c,stroke:#fca5a5,color:#fff
+  class L,PR dev
+  class S1,S2,S3 gate
+  class IMG,NIGHT after
+  class SYN prod
+  class ALERT alert
+```
 
 ### Why visual tests need the container
 
-Visual tests are famous for being flaky, and the reason is usually **not your app**. The same page renders slightly differently on different machines: different fonts, font smoothing and GPU settings. A screenshot approved on a Mac won't match one taken on a Linux CI server, so the test fails even though nothing changed.
+Visual regression tests compare screenshots pixel by pixel against an approved baseline. They're famous for flakiness, and the cause is usually **the environment, not the app**: different fonts, font smoothing or GPU settings between a developer's Mac and a Linux CI server.
 
 ```mermaid
 flowchart TB
@@ -260,16 +411,11 @@ flowchart TB
   class F2 good
 ```
 
-With the container, your laptop and CI use **the exact same image**, so the same fonts and the same pixels. That's why the demo can use `maxDiffPixels: 0`, which means not a single pixel of tolerance.
-
-### Catching a real regression
-
-To prove it works, I made the kind of "tiny" CSS change that slips through code review: the KPI numbers went from `28px` to `24px`. Nothing broke functionally. Then I ran the tests:
+To prove the container makes them trustworthy, I made a "tiny" CSS change: the dashboard's KPI numbers went from `28px` to `24px`. Every **functional** test still passed, because the app worked. The **visual** tests caught it immediately:
 
 ```terminal
 $ ./test.sh --project=chromium
   ✓  4 [chromium] › lists every release with its status (282ms)
-  ✓  3 [chromium] › shows the four delivery metrics (323ms)
   ✓  5 [chromium] › clicking a release opens its details, and × closes them (641ms)
   ✘  2 [chromium] › dashboard looks right (light) (682ms)
   ✘  1 [chromium] › dashboard looks right (dark) (714ms)
@@ -278,104 +424,56 @@ $ ./test.sh --project=chromium
       14607 pixels (ratio 0.02 of all image pixels) are different.
 ```
 
-The **functional tests passed**, because the app still works. The **visual tests failed**, because it no longer looks the same. Playwright writes a diff image that highlights every changed pixel in red:
+<figure><img src="posts/img/playwright-container/visual-diff.png" alt="Visual diff with changed pixels highlighted in red" loading="lazy"><figcaption>Playwright's diff image: every changed pixel in red</figcaption></figure>
 
-<figure><img src="posts/img/playwright-container/visual-diff.png" alt="Visual diff with changed text highlighted in red" loading="lazy"><figcaption>The diff: every pixel that moved is highlighted. The smaller numbers shifted the whole layout.</figcaption></figure>
+<figure><img src="posts/img/playwright-container/test-report.jpg" alt="Playwright HTML report showing 4 passed and 2 failed" loading="lazy"><figcaption>The HTML report: 4 passed, 2 failed, with diffs and traces attached</figcaption></figure>
 
-And the HTML report shows exactly what failed, with the screenshots and a trace you can step through:
+## Gotchas
 
-<figure><img src="posts/img/playwright-container/test-report.jpg" alt="Playwright HTML report: 4 passed, 2 failed" loading="lazy"><figcaption>Playwright's HTML report: 4 passed, 2 failed, with image diffs and traces attached</figcaption></figure>
+- **Version lock, two ways.** The image tag must match the `playwright` npm version in your project (otherwise it looks for browser builds that aren't there), and a browser server must match its clients (the `428` error above). Upgrade everything in one change.
+- **Size.** About 1 GB to download and 3.5 GB on disk. On CI, use runners that cache images, and don't pull a new tag on every job.
+- **Root by default.** Add `--user pwuser`, or `USER pwuser` in your Dockerfile, whenever you visit sites you don't control.
+- **Create visual baselines inside the container**, never on your host OS directly.
+- **The first visual run "fails"** with `A snapshot doesn't exist … writing actual`. Create baselines on purpose with `--update-snapshots`, review them, and commit them.
+- **Language images can lag.** The Java image was one patch behind the Node one when I checked.
 
-If the change was intentional, you accept it as the new baseline with one command (inside the container, so the pixels stay consistent):
+## Production checklist
 
-```terminal
-$ ./test.sh --update-snapshots
-```
-
-## Step 5: The same container in CI
-
-GitHub Actions can run a job **inside** a container image, so CI uses the exact same environment as your laptop. Trimmed from the demo's workflow:
-
-```yaml
-jobs:
-  test-and-screenshots:
-    runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
-      options: --ipc=host
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - run: npx playwright test
-      - run: node shoot.mjs
-      - uses: actions/upload-artifact@v4
-        with: { name: screenshots-and-deck, path: out/ }
-```
-
-```mermaid
-flowchart TB
-  subgraph CI["Every push"]
-    direction LR
-    P[Push] --> I[Start Playwright image] --> T[Run 18 tests] --> S[Build screenshots + deck]
-  end
-  subgraph ART["Download from the run"]
-    direction LR
-    R[Test report + diffs]
-    D[Screenshots + deck.pdf]
-  end
-  CI --> ART
-  classDef step fill:#4f46e5,stroke:#a5b4fc,color:#fff
-  classDef out fill:#15803d,stroke:#86efac,color:#fff
-  class P,I,T,S step
-  class R,D out
-```
-
-Every push now produces a test report **and** a fresh slide deck, ready to download for the next demo.
-
-**The real proof came on the first push.** The visual baselines were created in Docker on my Mac. GitHub's servers run Linux on completely different hardware. The [very first CI run](https://github.com/mohiadeen-ameer/playwright-container-demo/actions) still passed all 18 tests, including the pixel-perfect visual tests with zero tolerance, in about a minute end to end. Same image, same pixels.
-
-## Gotchas I hit
-
-> [!WARNING]
-> **The image tag and the npm version must match exactly.** The image `v1.64.1` contains browser builds for Playwright `1.64.1`. If `package.json` says anything else, Playwright looks for browsers that aren't there and fails. Pin both, and update them together.
-
-- **The first visual test run "fails".** No baseline exists yet, so Playwright writes one and reports `A snapshot doesn't exist … writing actual`. Create baselines deliberately with `--update-snapshots`, look at them, and commit them.
-- **Never create baselines on your Mac directly.** Always do it in the container, or CI won't match.
-- **3.5 GB is a lot for a laptop.** On CI, cache the image or use a runner that already has it, so you don't pull it on every job.
-- **It runs as root by default.** That's fine for your own app. For **untrusted websites**, run as the built-in `pwuser` user and follow Playwright's Docker security guidance.
-
-## If I set this up for a team today
-
-1. **Pin the image by version (or digest)** and update it like any other dependency, with a pull request and a test run.
-2. **Use visual tests for the pages that matter most**, not every page. A few stable, high-value screenshots beat hundreds of noisy ones.
-3. **Keep traces on failure** (`trace: "retain-on-failure"`). Playwright's trace viewer lets you replay a failed test step by step, which is far faster than guessing.
-4. **Shard big suites** across CI machines with `--shard=1/4`, all using the same image.
-5. **Let agents use the container.** Whether it's making demo slides or checking a UI change, a disposable, pre-built browser sandbox is the safe way to give an AI agent a browser. Microsoft also publishes a **Playwright MCP server** for agents that drive a browser directly.
+1. Pin the image **by digest**, and upgrade it like any dependency: in a pull request, with a test run.
+2. Keep the image tag, the npm version and any browser servers on **the same Playwright version**.
+3. Run with `--init --ipc=host`, and as **`pwuser`**.
+4. **Bake tests into an image** for repeatable pipelines; mount code only for local development.
+5. **Shard** big suites, and upload reports and traces as artifacts (`trace: "retain-on-failure"`).
+6. Add **synthetic checks** against production, with retries to ignore one-off network blips.
+7. Keep visual tests to the **pages that matter**; a few stable screenshots beat hundreds of noisy ones.
 
 ## Lessons learned
 
-- **The setup is the hard part, not the code.** The container removes it completely: one image, three browsers, zero installs.
-- **Screenshots belong in code.** A `shots.json` file beats a folder of manual screenshots that go stale after every release.
-- **Same image everywhere means trustworthy visual tests.** Most "flaky" screenshot tests are environment differences, not bugs.
-- **Functional and visual tests catch different things.** My CSS change passed every functional test and was still a visible regression.
-- **Watch what your agents do.** I learned about this tool by reading my agent's log. Good tools often show up there first.
+- **The setup is the product.** The image's real value is a tested, version-locked match of browsers, libraries and fonts.
+- **How you run it matters.** `--ipc=host`, `--init` and `pwuser` prevent the crashes and risks people blame on Playwright.
+- **One image, many roles.** The same artifact serves as a laptop tool, a CI job, a browser server and a production monitor.
+- **Same image means trustworthy pixels.** Baselines from an arm64 Mac matched amd64 CI exactly.
+- **Watch what your agents do.** I found this tool by reading my agent's log.
 
 <details>
 <summary>The whole thing on one screen (TL;DR)</summary>
 
-`mcr.microsoft.com/playwright` is Microsoft's Docker image with Node.js and Chromium, Firefox and WebKit preinstalled. With only Docker on my Mac, the [demo](https://github.com/mohiadeen-ameer/playwright-container-demo):
+`mcr.microsoft.com/playwright:v1.64.1-noble` is Microsoft's browser image: Ubuntu 24.04, Node.js 26, Chromium, Firefox and WebKit (about 1.25 GB of browsers), 50 fonts, and a `pwuser` account. It's about 1 GB to download and 3.5 GB on disk, multi-arch, with Python, .NET and Java flavors.
 
-- takes 6 screenshots (desktop, phone, light, dark, WebKit, a live site) and builds a 7-slide PDF in **under 10 seconds** (`./shoot.sh`)
-- runs **18 functional and visual tests** across 3 browsers in **4.8 seconds** (`./test.sh`)
-- caught a 4px font change that every functional test missed (**14,607 pixels** different)
-- runs the same image in GitHub Actions, so CI renders exactly what you see locally.
+Run it with `--init --ipc=host --user pwuser`, and pin it by digest. Then use it five ways:
 
-Keep the image tag and npm version in sync, and create visual baselines inside the container.
+1. one-shot jobs
+2. your own test image (+57 MB, 1-second rebuilds)
+3. a shared browser server via Compose
+4. sharded CI
+5. synthetic monitoring of production
+
+Keep every Playwright version in lockstep.
 
 </details>
 
 ---
 
-What started as a line in my agent's log turned into the setup I'll use before every demo from now on: run one command, get fresh screenshots, a ready-made deck, and proof that nothing changed by accident.
+What started as a line in my agent's log turned into a new respect for a well-built container image: the hard, boring setup work done once, so every laptop, pipeline and monitor gets exactly the same browsers.
 
-*Are you using Playwright in containers, or letting agents drive browsers for you? I'd love to hear how. Find me on [LinkedIn](https://www.linkedin.com/in/mohiadeen-ameer/).*
+*Are you running Playwright in containers in production? I'd love to hear how you've set it up. Find me on [LinkedIn](https://www.linkedin.com/in/mohiadeen-ameer/).*

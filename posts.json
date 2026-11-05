@@ -1,17 +1,17 @@
 [
   {
     "slug": "playwright-container",
-    "title": "Playwright in a Container: Screenshots, Slides and Tests with Only Docker",
+    "title": "Inside the Playwright Container: What's in Microsoft's Browser Image and How to Run It in Production",
     "date": "2026-11-05",
-    "description": "My AI agent pulled Microsoft's Playwright container to screenshot an app for a demo. Here's what that image is, and how to use it for one-command screenshots, auto-generated slide decks, and cross-browser visual tests in CI.",
+    "description": "A teardown of mcr.microsoft.com/playwright: layers, browsers, fonts, tags and the flags that matter. Then five real ways to use it, from one-shot screenshot jobs to a shared browser server, sharded CI and synthetic monitoring.",
     "tags": [
-      "playwright",
       "docker",
+      "playwright",
+      "containers",
       "testing",
-      "automation",
       "ci"
     ],
-    "readTime": "14 min",
+    "readTime": "16 min",
     "difficulty": "intermediate"
   },
   {
