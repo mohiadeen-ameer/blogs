@@ -1,9 +1,9 @@
 [
   {
     "slug": "playwright-container",
-    "title": "Inside the Playwright Container: What's in Microsoft's Browser Image and How to Run It in Production",
+    "title": "Playwright in a Container: What to Use It For and How",
     "date": "2026-11-05",
-    "description": "A teardown of mcr.microsoft.com/playwright: layers, browsers, fonts, tags and the flags that matter. Then five real ways to use it, from one-shot screenshot jobs to a shared browser server, sharded CI and synthetic monitoring.",
+    "description": "Microsoft's Playwright image gives you Chromium, Firefox and WebKit with only Docker installed. When to use it, the flags that matter, and six practical setups: tests, screenshots, your own test image, a shared browser server, CI and production monitoring.",
     "tags": [
       "docker",
       "playwright",
@@ -11,7 +11,7 @@
       "testing",
       "ci"
     ],
-    "readTime": "16 min",
+    "readTime": "7 min",
     "difficulty": "intermediate"
   },
   {
