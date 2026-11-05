@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="assets/style.css?v=9">
+<link rel="stylesheet" href="assets/style.css?v=10">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg?v=3">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png?v=3">
 <link rel="shortcut icon" href="favicon.ico?v=3">
@@ -53,7 +53,7 @@
   </div>
 </footer>
 
-<script src="assets/common.js?v=9"></script>
+<script src="assets/common.js?v=10"></script>
 <script>
 (function () {
   document.getElementById("year").textContent = new Date().getFullYear();
@@ -102,9 +102,9 @@
     all.forEach(function (p) { (p.tags || []).forEach(function (t) { counts[t] = (counts[t] || 0) + 1; }); });
     var tags = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || a.localeCompare(b); });
     if (activeTag !== "all" && !counts[activeTag]) activeTag = "all";
-    chipsEl.innerHTML = ['<button class="chip" data-tag="all" aria-pressed="' + (activeTag === "all") + '">all<span class="n">' + all.length + "</span></button>"]
+    chipsEl.innerHTML = ['<button class="chip" data-tag="all" aria-pressed="' + (activeTag === "all") + '">all</button>']
       .concat(tags.map(function (t) {
-        return '<button class="chip" data-tag="' + esc(t) + '" aria-pressed="' + (activeTag === t) + '">#' + esc(t) + '<span class="n">' + counts[t] + "</span></button>";
+        return '<button class="chip" data-tag="' + esc(t) + '" aria-pressed="' + (activeTag === t) + '">#' + esc(t) + "</button>";
       })).join("");
   }
 
