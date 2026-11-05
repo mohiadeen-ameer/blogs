@@ -332,6 +332,8 @@ flowchart TB
 
 Every push now produces a test report **and** a fresh slide deck, ready to download for the next demo.
 
+**The real proof came on the first push.** The visual baselines were created in Docker on my Mac. GitHub's servers run Linux on completely different hardware. The [very first CI run](https://github.com/mohiadeen-ameer/playwright-container-demo/actions) still passed all 18 tests, including the pixel-perfect visual tests with zero tolerance, in about a minute end to end. Same image, same pixels.
+
 ## Gotchas I hit
 
 > [!WARNING]
