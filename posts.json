@@ -1,5 +1,20 @@
 [
   {
+    "slug": "playwright-container",
+    "title": "Playwright in a Container: Screenshots, Slides and Tests with Only Docker",
+    "date": "2026-11-05",
+    "description": "My AI agent pulled Microsoft's Playwright container to screenshot an app for a demo. Here's what that image is, and how to use it for one-command screenshots, auto-generated slide decks, and cross-browser visual tests in CI.",
+    "tags": [
+      "playwright",
+      "docker",
+      "testing",
+      "automation",
+      "ci"
+    ],
+    "readTime": "14 min",
+    "difficulty": "intermediate"
+  },
+  {
     "slug": "journey-to-cloud",
     "title": "Journey to Cloud: Modernizing 60+ Legacy Java Apps, from WebSphere to Kubernetes",
     "date": "2024-06-15",

@@ -366,3 +366,12 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .stat-strip div { border: 1px solid var(--line); border-radius: 12px; background: var(--bg-elev); padding: 16px; }
 .stat-strip b { display: block; font-size: 1.6rem; letter-spacing: -.03em; color: var(--ink); line-height: 1.1; }
 .stat-strip span { font: 500 12px var(--mono); color: var(--ink-dim); }
+
+/* Figures: <figure><img><figcaption> in posts */
+.prose figure { margin: 1.6em 0; }
+.prose figure img { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.prose figure.narrow img { max-width: 300px; margin: 0 auto; }
+.prose figcaption { margin-top: 10px; text-align: center; font: 500 12.5px var(--mono); color: var(--ink-dim); }
+.prose .fig-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.prose .fig-pair figure { margin: 0; }
+@media (max-width: 640px) { .prose .fig-pair { grid-template-columns: 1fr; } }
